@@ -1,0 +1,4 @@
+Test Name,Hypothesis Tested,Test Statistic,p-value,Significant (alpha=0.05),Effect Size,Conclusion
+Levene's Test (Homogeneity of Variances),Equal variances across weather conditions,58.7468,7.171643224955882e-49,True,N/A,Variances are heteroscedastic
+One-Way ANOVA,Equal mean delivery duration across weather conditions,149.7733,3.3745031401433795e-123,True,Eta-sq = 0.0775,Reject H0: Statistically significant mean differences
+Kruskal-Wallis H-Test (Non-Parametric),Equal median delivery duration ranks across weather conditions,429.9505,9.372330943379141e-92,True,Epsilon-sq = 0.0597,Reject H0: Statistically significant rank differences
