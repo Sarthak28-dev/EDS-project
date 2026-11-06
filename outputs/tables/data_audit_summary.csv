@@ -1,0 +1,12 @@
+Category,Issue Description,Records Affected,Severity,Details
+Dimensions,Total raw observations and columns,7225,Informational,"7225 rows, 14 columns"
+Missing Values,Null / NaN observations in column 'weather',202,High,2.80% of total dataset
+Missing Values,Null / NaN observations in column 'parcel_weight_kg',184,High,2.55% of total dataset
+Duplicates,Exact duplicate records (all columns identical),52,High,52 identical rows
+Duplicates,Duplicate delivery_id identifiers,75,High,75 non-unique primary key entries
+Value Validity,Negative parcel weights (physically impossible),51,High,Values with negative sign from keystroke error
+Value Validity,Extreme parcel weight outliers (>100 kg),8,Medium,Two-decimal shift / omitted decimal point keystroke error (100x multiplier)
+Categorical Consistency,Inconsistent carrier naming / casing variations,253,Medium,"Variants like fastship, Apex_Delivery, Natl_Express"
+Categorical Consistency,Non-standard traffic level labels,21,Medium,"Values: UNKNOWN, Extremely High, med"
+Categorical Consistency,Non-standard weather categories,15,Low,"Values: Thunderstorm, Sunny_Windy"
+Temporal Validity,Non-positive delivery duration (hours <= 0),14,Critical,Inverted timestamps / zero elapsed transit time

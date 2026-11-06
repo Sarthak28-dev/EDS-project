@@ -1,0 +1,6 @@
+route,ApexDelivery,FastShip,NationalExpress,QuickLogistics
+Route_Central,1.48,1.42,1.58,1.44
+Route_East,5.43,5.12,5.98,5.44
+Route_North,3.36,3.17,3.59,3.47
+Route_South,2.76,2.67,3.02,2.78
+Route_West,3.36,3.2,3.64,3.44

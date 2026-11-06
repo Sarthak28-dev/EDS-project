@@ -1,0 +1,6 @@
+route,Clear,Foggy,Rainy,Snowy,Stormy
+Route_Central,1.32,1.53,1.5,1.9,2.14
+Route_East,4.84,5.74,5.49,6.97,7.82
+Route_North,2.98,3.69,3.43,4.27,4.82
+Route_South,2.44,3.18,2.81,3.63,3.71
+Route_West,3.03,3.61,3.44,4.24,5.03
