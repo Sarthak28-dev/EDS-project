@@ -1,0 +1,5 @@
+,carrier,total_deliveries,mean_hours,median_hours,std_hours,delay_pct
+0,ApexDelivery,2261,3.02,2.66,1.78,27.95
+1,FastShip,1993,2.92,2.57,1.67,23.23
+2,NationalExpress,1618,3.27,2.84,1.92,37.89
+3,QuickLogistics,1264,3.03,2.73,1.76,30.3
