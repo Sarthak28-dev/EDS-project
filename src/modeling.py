@@ -53,24 +53,24 @@ EXCLUDED_COLUMNS: List[str] = [
 
 def load_delivery_data(
     filepath: Optional[str] = None,
-    fallback_fixture_path: str = "data/processed/temp_delivery_data_fixture.csv"
+    primary_path: str = "data/processed/modelling_delivery_data.csv"
 ) -> pd.DataFrame:
     """
-    Load delivery dataset from the specified path or standard production/fixture paths.
+    Load delivery dataset from the specified path or standard production paths.
 
     Priority:
     1. Explicit filepath argument (if provided).
-    2. 'data/processed/cleaned_delivery_data.csv' (Person 1's cleaned dataset).
-    3. fallback_fixture_path (schema-compliant test fixture).
+    2. 'data/processed/modelling_delivery_data.csv' (Person 1's unimputed ML modelling dataset).
+    3. 'data/processed/cleaned_delivery_data.csv' (Person 1's descriptive cleaned dataset).
     """
     candidates = []
     if filepath:
         candidates.append(filepath)
     candidates.extend([
+        primary_path,
         "data/processed/cleaned_delivery_data.csv",
-        fallback_fixture_path,
+        os.path.join(os.path.dirname(__file__), "..", primary_path),
         os.path.join(os.path.dirname(__file__), "..", "data", "processed", "cleaned_delivery_data.csv"),
-        os.path.join(os.path.dirname(__file__), "..", fallback_fixture_path),
     ])
 
     for p in candidates:
@@ -432,6 +432,12 @@ def extract_feature_importance(
             "importance_std": perm.importances_std,
         }).sort_values(by="importance_mean", ascending=False).reset_index(drop=True)
         results["permutation"] = df_perm
+
+    # Define primary importance dataframe (permutation preferred for general estimators like HistGradientBoosting)
+    if "permutation" in results:
+        results["primary"] = results["permutation"]
+    elif "grouped_mdi" in results:
+        results["primary"] = results["grouped_mdi"]
 
     return results
 

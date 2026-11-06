@@ -1,5 +1,6 @@
 """
 Unit and integration tests for RouteWise modeling module (Person 2).
+Audited and updated to validate against Person 1's authentic modelling_delivery_data.csv.
 """
 
 import unittest
@@ -29,26 +30,32 @@ class TestRouteWiseModeling(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.df = load_delivery_data(fallback_fixture_path="data/processed/temp_delivery_data_fixture.csv")
+        # Load authentic unimputed modelling dataset (7,136 records)
+        cls.df = load_delivery_data(primary_path="data/processed/modelling_delivery_data.csv")
         cls.X, cls.y = prepare_features(cls.df)
         cls.X_train, cls.X_test, cls.y_train, cls.y_test = split_data(
             cls.X, cls.y, test_size=0.2, random_state=42
         )
 
     def test_dataset_loaded_and_schema_contract(self):
-        self.assertGreater(len(self.df), 100)
+        # Verify row count matches Person 1's 7,136 records
+        self.assertEqual(len(self.df), 7136)
         self.assertIn(TARGET_VARIABLE, self.df.columns)
         for num_col in NUMERICAL_FEATURES:
             self.assertIn(num_col, self.df.columns)
         for cat_col in CATEGORICAL_FEATURES:
             self.assertIn(cat_col, self.df.columns)
 
+        # Verify intentional missingness in unimputed modelling dataset
+        self.assertGreater(self.df["parcel_weight_kg"].isna().sum(), 0)
+        self.assertGreater(self.df["weather"].isna().sum(), 0)
+
     def test_prepare_features_prevents_leakage(self):
         expected_cols = sorted(NUMERICAL_FEATURES + CATEGORICAL_FEATURES)
         self.assertListEqual(sorted(list(self.X.columns)), expected_cols)
         self.assertEqual(len(self.y), len(self.X))
 
-        # Check that excluded leakage variables are strictly NOT in X
+        # Check that excluded leakage variables and identifiers are strictly absent from X
         for col in EXCLUDED_COLUMNS:
             self.assertNotIn(col, self.X.columns)
         self.assertNotIn(TARGET_VARIABLE, self.X.columns)
@@ -56,9 +63,18 @@ class TestRouteWiseModeling(unittest.TestCase):
     def test_train_test_split_ratio(self):
         n_total = len(self.X)
         n_test = len(self.X_test)
-        self.assertAlmostEqual(n_test / n_total, 0.2, delta=0.02)
+        self.assertAlmostEqual(n_test / n_total, 0.2, delta=0.01)
         self.assertEqual(len(self.X_train), len(self.y_train))
         self.assertEqual(len(self.X_test), len(self.y_test))
+
+    def test_pipeline_imputation_handles_missing_data(self):
+        # Verify pipeline fits and predicts seamlessly despite nulls in X_train and X_test
+        candidates = get_model_candidates(random_state=42)
+        hgb_pipeline = candidates["HistGradientBoosting"]
+        hgb_pipeline.fit(self.X_train, self.y_train)
+        preds = hgb_pipeline.predict(self.X_test)
+        self.assertEqual(len(preds), len(self.X_test))
+        self.assertFalse(np.isnan(preds).any(), "Predictions contain NaN despite imputer in pipeline!")
 
     def test_candidate_models_instantiation(self):
         candidates = get_model_candidates(random_state=42)
@@ -70,15 +86,17 @@ class TestRouteWiseModeling(unittest.TestCase):
 
     def test_5fold_cross_validation(self):
         candidates = get_model_candidates(random_state=42)
-        res = evaluate_cv(candidates["Linear Regression"], self.X_train, self.y_train, cv_folds=5)
+        res = evaluate_cv(candidates["HistGradientBoosting"], self.X_train, self.y_train, cv_folds=5)
 
         self.assertEqual(len(res["mae_scores"]), 5)
         self.assertEqual(len(res["rmse_scores"]), 5)
+        self.assertEqual(len(res["mse_scores"]), 5)
+        self.assertEqual(len(res["r2_scores"]), 5)
         self.assertGreater(res["mae_mean"], 0.0)
         self.assertGreater(res["rmse_mean"], 0.0)
-        self.assertLessEqual(res["r2_mean"], 1.0)
+        self.assertGreater(res["r2_mean"], 0.90)
 
-    def test_compare_models_cv(self):
+    def test_compare_models_cv_and_selection(self):
         candidates = get_model_candidates(random_state=42)
         comp_df = compare_models_cv(candidates, self.X_train, self.y_train, cv_folds=5)
 
@@ -86,17 +104,21 @@ class TestRouteWiseModeling(unittest.TestCase):
         self.assertIn("Model", comp_df.columns)
         self.assertIn("CV MAE (hours)", comp_df.columns)
         self.assertIn("CV RMSE (hours)", comp_df.columns)
+        self.assertIn("CV MSE (hours^2)", comp_df.columns)
         self.assertIn("CV R2", comp_df.columns)
 
-        # Baseline should have lower R2 than actual ML models
-        dummy_r2 = comp_df.loc[comp_df["Model"] == "Dummy Baseline", "raw_r2_mean"].values[0]
+        # Confirm HistGradientBoosting achieves superior CV performance
+        hgb_r2 = comp_df.loc[comp_df["Model"] == "HistGradientBoosting", "raw_r2_mean"].values[0]
         rf_r2 = comp_df.loc[comp_df["Model"] == "Random Forest", "raw_r2_mean"].values[0]
+        dummy_r2 = comp_df.loc[comp_df["Model"] == "Dummy Baseline", "raw_r2_mean"].values[0]
+
+        self.assertGreater(hgb_r2, rf_r2)
         self.assertGreater(rf_r2, dummy_r2)
 
     def test_test_set_evaluation(self):
         candidates = get_model_candidates(random_state=42)
         metrics, y_pred = evaluate_test_set(
-            candidates["Random Forest"],
+            candidates["HistGradientBoosting"],
             self.X_train, self.y_train,
             self.X_test, self.y_test
         )
@@ -107,6 +129,8 @@ class TestRouteWiseModeling(unittest.TestCase):
         self.assertIn("R2", metrics)
         self.assertEqual(len(y_pred), len(self.y_test))
         self.assertAlmostEqual(metrics["RMSE"], np.sqrt(metrics["MSE"]), places=4)
+        self.assertGreater(metrics["R2"], 0.95)
+        self.assertLess(metrics["MAE"], 0.30)
 
     def test_residual_calculation_and_signs(self):
         y_true = np.array([5.0, 3.0, 8.0])
@@ -124,7 +148,7 @@ class TestRouteWiseModeling(unittest.TestCase):
     def test_analyze_residuals_by_slice(self):
         candidates = get_model_candidates(random_state=42)
         metrics, y_pred = evaluate_test_set(
-            candidates["Linear Regression"],
+            candidates["HistGradientBoosting"],
             self.X_train, self.y_train,
             self.X_test, self.y_test
         )
@@ -133,34 +157,35 @@ class TestRouteWiseModeling(unittest.TestCase):
 
         route_slice = analyze_residuals_by_slice(df_eval, "route")
         self.assertIn("route", route_slice.columns)
+        self.assertIn("Count", route_slice.columns)
+        self.assertIn("Mean_Residual", route_slice.columns)
         self.assertIn("MAE", route_slice.columns)
         self.assertIn("RMSE", route_slice.columns)
-        self.assertIn("Mean_Residual", route_slice.columns)
 
     def test_feature_importance_extraction(self):
-        rf_pipeline = get_model_candidates(random_state=42)["Random Forest"]
-        rf_pipeline.fit(self.X_train, self.y_train)
+        hgb_pipeline = get_model_candidates(random_state=42)["HistGradientBoosting"]
+        hgb_pipeline.fit(self.X_train, self.y_train)
 
-        importances = extract_feature_importance(rf_pipeline, self.X_test, self.y_test)
-        self.assertIn("raw_mdi", importances)
-        self.assertIn("grouped_mdi", importances)
+        importances = extract_feature_importance(hgb_pipeline, self.X_test, self.y_test)
         self.assertIn("permutation", importances)
+        self.assertIn("primary", importances)
 
-        # Sum of MDI importances should equal approximately 1.0
-        self.assertAlmostEqual(float(importances["grouped_mdi"]["importance"].sum()), 1.0, places=3)
+        # Check distance is the top predictor
+        top_feature = importances["permutation"].iloc[0]["feature"]
+        self.assertEqual(top_feature, "distance_km")
 
     def test_safe_prediction_function(self):
-        pipeline = get_model_candidates(random_state=42)["Random Forest"]
+        pipeline = get_model_candidates(random_state=42)["HistGradientBoosting"]
         pipeline.fit(self.X_train, self.y_train)
 
-        # Normal prediction input
+        # Normal prediction input using authentic categories
         sample_input = {
-            "route": "Route_A_NorthSouth",
-            "carrier": "SwiftLog",
+            "route": "Route_Central",
+            "carrier": "ApexDelivery",
             "weather": "Clear",
             "parcel_weight_kg": 12.5,
-            "distance_km": 120.0,
-            "traffic_level": "Medium"
+            "distance_km": 85.0,
+            "traffic_level": "Jam"
         }
         pred = predict_delivery_time(pipeline, sample_input)
         self.assertIsInstance(pred, float)
@@ -168,16 +193,29 @@ class TestRouteWiseModeling(unittest.TestCase):
 
         # Edge case: novel unseen categorical levels should NOT throw an error
         unseen_input = {
-            "route": "Completely_Unknown_Route",
-            "carrier": "FutureCarrierX",
-            "weather": "Tornado",
+            "route": "Route_Galaxy",
+            "carrier": "QuantumDrone",
+            "weather": "Blizzard",
             "parcel_weight_kg": 15.0,
-            "distance_km": 80.0,
+            "distance_km": 50.0,
             "traffic_level": "Gridlock"
         }
         pred_unseen = predict_delivery_time(pipeline, unseen_input)
         self.assertIsInstance(pred_unseen, float)
         self.assertGreater(pred_unseen, 0.0)
+
+        # Missing values in input dictionary should be gracefully imputed by pipeline
+        missing_input = {
+            "route": "Route_North",
+            "carrier": "FastShip",
+            "weather": np.nan,
+            "parcel_weight_kg": np.nan,
+            "distance_km": 110.0,
+            "traffic_level": "High"
+        }
+        pred_missing = predict_delivery_time(pipeline, missing_input)
+        self.assertIsInstance(pred_missing, float)
+        self.assertGreater(pred_missing, 0.0)
 
 if __name__ == "__main__":
     unittest.main()
