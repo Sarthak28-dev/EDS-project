@@ -138,7 +138,7 @@ The modeling pipeline is engineered as a clean, modular Python architecture with
     # ---------------------------------------------------------------------------
     # Cell 4: Code - Data Ingestion
     # ---------------------------------------------------------------------------
-    add_code("""# Load the cleaned delivery dataset (modelling_delivery_data.csv — 7,136 rows)
+    add_code("""# Load the cleaned delivery dataset (modelling_delivery_data.csv - 7,136 rows)
 raw_df = load_delivery_data()
 
 print(f"Dataset Shape: {raw_df.shape[0]} rows x {raw_df.shape[1]} columns")
@@ -271,7 +271,7 @@ plt.show()""")
     # Cell 13: Markdown Analysis on Model Selection
     # ---------------------------------------------------------------------------
     add_md("""### Analysis: Model Selection Justification
-Based on the 5-fold cross-validation evidence, **HistGradientBoostingRegressor** is selected as the final model:
+Based on 5-fold cross-validation evidence on the training split, **HistGradientBoostingRegressor** is selected for further prototype evaluation:
 
 | Criterion | HistGradientBoosting | Random Forest |
 |-----------|---------------------|---------------|
@@ -280,10 +280,10 @@ Based on the 5-fold cross-validation evidence, **HistGradientBoostingRegressor**
 | CV MSE (hours²) | ~0.129 ± 0.013 | ~0.164 ± 0.015 |
 | CV R² | ~0.960 ± 0.003 | ~0.948 ± 0.003 |
 
-- **Performance Advantage:** HistGradientBoosting strictly dominates Random Forest on every metric: lower MAE, lower RMSE, lower MSE, and higher $R^2$. No defensible methodological argument supports selecting Random Forest as the primary model.
-- **Missing-Value Handling:** HistGradientBoosting natively routes missing values through its histogram-based splits, so the pipeline's `SimpleImputer` provides an additional safety layer, but the estimator is inherently robust to missingness.
-- **Boosting Mechanics:** Unlike the bagging approach of Random Forest, gradient boosting iteratively trains each new tree to correct the residuals of its predecessors, achieving systematically lower bias on complex, feature-interaction-heavy prediction tasks such as supply chain transit modelling.
-- **Selection Decision:** We advance the **HistGradientBoostingRegressor** pipeline to the final test-set evaluation stage.""")
+- **Performance Advantage:** HistGradientBoosting achieves lower cross-validated MAE, lower RMSE, and higher $R^2$ compared to Random Forest and linear regression on this synthetic dataset.
+- **Preprocessing Pipeline Alignment:** Both pipelines use identical fold-level imputation (`SimpleImputer` with median/most-frequent strategies) within `ColumnTransformer`. Preprocessing is fitted strictly on in-fold training data.
+- **Tree-Based Ensembling:** Gradient boosting sequentially fits decision trees to the negative gradients of the loss function, allowing it to capture non-linear interactions among distance, weather conditions, and traffic levels effectively.
+- **Selection Decision:** We advance the **HistGradientBoostingRegressor** pipeline to the held-out test evaluation stage as the best-performing prototype candidate.""")
 
     # ---------------------------------------------------------------------------
     # Cell 14: Code - Final Evaluation on Untouched Test Set
@@ -323,10 +323,10 @@ print(f"Proportion of Variance Explained (R2): {test_metrics['R2']*100:.1f}%")""
     # ---------------------------------------------------------------------------
     # Cell 15: Markdown Analysis on Test Generalization
     # ---------------------------------------------------------------------------
-    add_md("""### Analysis: Test Generalization & Overfitting Assessment
-1. **Consistency with Cross-Validation:** The test MAE (~0.221 hours) and RMSE (~0.353 hours) are closely aligned with the cross-validation estimates (CV MAE ~0.234, CV RMSE ~0.358). This confirms that the model generalizes robustly to unseen operational data and does not suffer from data leakage or overfitting.
-2. **Operational Meaning:** An average absolute error of approximately 13 minutes represents high practical predictive accuracy for regional freight dispatching. It enables the distributor to quote reliable customer delivery windows and dynamically assign couriers with high confidence.
-3. **Variance Explained:** The model accounts for approximately 96% of the total variance in transit duration ($R^2 \\approx 0.960$), demonstrating that the combination of route, carrier, weather, weight, distance, and traffic conditions provides highly sufficient signal for accurate operational planning.""")
+    add_md("""### Analysis: Test Evaluation & Synthetic Data Context
+1. **Consistency Across Partitions:** The held-out test MAE (~0.221 hours / 13.3 min) and RMSE (~0.353 hours / 21.2 min) are consistent with the cross-validation estimates (CV MAE ~0.234, CV RMSE ~0.358). This consistency suggests good generalization behavior on this synthetic dataset without evidence of fold-level leakage.
+2. **Experimental Prototype Accuracy:** In the context of this simulated logistics benchmark, an average absolute error of approximately 13 minutes indicates that the selected feature set provides strong predictive signal.
+3. **Synthetic Dataset Disclosure:** **Important:** This project is developed and evaluated on a synthetic benchmark dataset generated for exploratory analysis. Consequently, while the mathematical methodology is rigorous, these metrics demonstrate prototype feasibility rather than establishing real-world freight delivery prediction accuracy.""")
 
     # ---------------------------------------------------------------------------
     # Cell 16: Code - Residual Calculation & Summary Statistics
@@ -342,13 +342,26 @@ eval_df["residual"] = residuals.values
 eval_df["abs_error"] = np.abs(residuals.values)
 eval_df["error_percentage"] = (eval_df["abs_error"] / eval_df["actual"]) * 100
 
-# Bin parcel weight into operational categories
-eval_df["parcel_weight_category"] = pd.cut(
+# Explicitly categorize missing weather for residual diagnostics
+eval_df["weather"] = eval_df["weather"].fillna("Missing")
+
+# Bin parcel weight into operational categories including explicit Missing category
+# Dataset weight range: min = 0.2 kg, max = 40.0 kg. include_lowest=True ensures lower bound coverage.
+weight_binned = pd.cut(
     eval_df["parcel_weight_kg"],
     bins=[0, 10, 25, 100],
-    labels=["Light (<10kg)", "Medium (10-25kg)", "Heavy (>25kg)"]
+    labels=["Light (<10kg)", "Medium (10-25kg)", "Heavy (>25kg)"],
+    include_lowest=True
 )
+eval_df["parcel_weight_category"] = weight_binned.cat.add_categories("Missing").fillna("Missing")
 
+# Reconciliation Verification: Confirm all diagnostic slice variables sum to full test set size (1,428)
+total_test_samples = len(eval_df)
+for col in ["route", "carrier", "weather", "parcel_weight_category"]:
+    slice_total = eval_df[col].value_counts().sum()
+    assert slice_total == total_test_samples, f"Count mismatch in {col}: {slice_total} != {total_test_samples}"
+
+print(f"Reconciliation verified: All diagnostic slices sum to exactly {total_test_samples} observations.\\n")
 print("Residual Summary Statistics (hours):")
 res_stats = residuals.describe(percentiles=[0.05, 0.25, 0.50, 0.75, 0.95]).to_frame(name="Residual_Hours")
 res_stats.loc["skewness"] = residuals.skew()
@@ -464,14 +477,18 @@ display(carrier_summary)""")
     # Cell 25: Markdown Analysis on Route & Carrier Slices
     # ---------------------------------------------------------------------------
     add_md("""### Analysis: Diagnostics 5 & 6 — Route & Carrier Performance
-#### Route-Level Insights
-The five operational corridors (`Route_Central`, `Route_North`, `Route_South`, `Route_East`, `Route_West`) exhibit comparable residual distributions, confirming that the model is not systematically biased toward any particular geographic region:
-- **Corridor Variance:** Routes with longer average distances (e.g., `Route_North`, `Route_East`) display slightly wider interquartile residual ranges, consistent with the increased cumulative uncertainty over longer transits.
-- **Operational Recommendation:** Fleet dispatchers should apply dynamic safety buffers on routes with higher residual variance when quoting SLAs to customers in those service areas.
+#### Route-Level Performance & Dispersion
+Across the five corridors (`Route_Central`, `Route_North`, `Route_South`, `Route_East`, `Route_West`), error magnitudes scale with transit distance:
+- **Corridor Dispersion:** `Route_East` (Count: 227, MAE: 0.414h, P95: 1.341h) and `Route_West` (Count: 187, MAE: 0.275h, P95: 0.812h) display wider residual dispersion than compact urban routes (`Route_Central`, Count: 398, MAE: 0.101h, P95: 0.255h).
+- **Practical Application:** Longer corridors accumulate higher operational variability, suggesting that dynamic dispatch buffers should be proportionally scaled by corridor length.
 
-#### Carrier-Level Insights & Non-Causality
-- **Carrier Comparison:** The mean residuals across all four carriers (`ApexDelivery`, `FastShip`, `NationalExpress`, `QuickLogistics`) cluster tightly around zero (between $-0.05$ and $+0.05$ hours). This indicates that the model is unbiased across logistics providers.
-- **Correlation vs. Causation Caution:** While slight differences in MAE exist between carriers, **predictive feature importance does NOT imply carrier fault or inefficiency**. A carrier assigned to predominantly difficult or long-distance routes will naturally exhibit higher delivery duration variance. Conflating statistical association with vendor competence would represent an unjustified operational conclusion.""")
+#### Carrier-Level Metrics & Non-Causality
+- **Reported Carrier Statistics:**
+  - `ApexDelivery`: Count = 462, MAE = 0.208h, RMSE = 0.322h, P95 = 0.638h, Mean Residual = -0.014h.
+  - `FastShip`: Count = 412, MAE = 0.202h, RMSE = 0.311h, P95 = 0.621h, Mean Residual = -0.009h.
+  - `NationalExpress`: Count = 302, MAE = 0.264h, RMSE = 0.440h, P95 = 0.887h, Mean Residual = +0.026h.
+  - `QuickLogistics`: Count = 252, MAE = 0.223h, RMSE = 0.355h, P95 = 0.704h, Mean Residual = +0.021h.
+- **Non-Causality & Fairness Caution:** While signed mean residuals are numerically small, **near-zero average residuals must not be interpreted as definitive proof of carrier fairness or operational neutrality**. Carrier assignments in real-world or synthetic operations are confounded with route difficulty, distance distributions, and dispatch timing. Attributing operational competence directly to carrier labels from regression diagnostics is methodologically invalid.""")
 
     # ---------------------------------------------------------------------------
     # Cell 26: Code - Diagnostics 7 & 8: Residuals Stratified by Weather & Weight
@@ -514,12 +531,25 @@ print(f"Saved combined slice residual analysis to {slice_summary_md_path}")""")
     # Cell 27: Markdown Analysis on Weather & Weight Slices
     # ---------------------------------------------------------------------------
     add_md("""### Analysis: Diagnostics 7 & 8 — Weather & Weight Slices
-#### Weather Impact
-- **Adverse Meteorological Conditions:** Severe weather conditions (`Stormy`, `Snowy`) display the widest residual spread and the highest positive outliers (maximum overruns exceeding 2 hours). While clear conditions allow the model to predict transit times with sub-20-minute accuracy, extreme storms introduce unmeasured road blockages and speed reductions.
-- **Operational Mitigation:** The dispatch platform should ingest live meteorological warnings and trigger conditional SLA alerts when storm or snow advisories are active.
+#### Weather Slice Breakdown (Including Missing Category)
+- **Observed Categories:**
+  - `Clear` (Count: 745): MAE = 0.185h, RMSE = 0.265h, P95 = 0.547h.
+  - `Rainy` (Count: 299): MAE = 0.202h, RMSE = 0.313h, P95 = 0.617h.
+  - `Foggy` (Count: 149): MAE = 0.216h, RMSE = 0.317h, P95 = 0.643h.
+  - `Snowy` (Count: 113): MAE = 0.250h, RMSE = 0.348h, P95 = 0.730h.
+  - `Stormy` (Count: 76): MAE = 0.442h, RMSE = 0.652h, P95 = 1.488h.
+  - `Missing` (Count: 46): MAE = 0.244h, RMSE = 0.364h, P95 = 0.778h.
+- **Reconciliation Check:** 745 + 299 + 149 + 113 + 76 + 46 = **1,428 total observations** (100% of held-out test set).
+- **Insights:** `Stormy` conditions produce the highest prediction dispersion and largest delays. Deliveries with missing weather values were imputed within the pipeline and show error dispersion consistent with the broader sample.
 
-#### Parcel Weight Impact
-- **Weight Categories:** Residual distributions are relatively uniform across `Light (<10kg)`, `Medium (10-25kg)`, and `Heavy (>25kg)` packages, with only a slight increase in variance for heavy shipments. This demonstrates that parcel weight acts primarily as a minor handling time adjustment rather than a dominant source of transit volatility.""")
+#### Parcel Weight Slice Breakdown (Including Missing Category)
+- **Observed Categories:**
+  - `Light (<10kg)` (Count: 1,191): MAE = 0.217h, RMSE = 0.349h, P95 = 0.677h.
+  - `Medium (10-25kg)` (Count: 180): MAE = 0.248h, RMSE = 0.394h, P95 = 0.758h.
+  - `Heavy (>25kg)` (Count: 15): MAE = 0.243h, RMSE = 0.307h, P95 = 0.537h.
+  - `Missing` (Count: 42): MAE = 0.222h, RMSE = 0.354h, P95 = 0.724h.
+- **Reconciliation Check:** 1,191 + 180 + 15 + 42 = **1,428 total observations** (100% of held-out test set).
+- **Insights:** The model demonstrates consistent error distributions across package weight groups, confirming that weight acts as a secondary additive handling factor rather than a destabilizing source of variance.""")
 
     # ---------------------------------------------------------------------------
     # Cell 28: Code - Feature Importance Extraction & Visualization
@@ -543,7 +573,7 @@ display(df_perm)
 # Plot Primary Permutation Feature Importance
 fig_feat = plot_feature_importance(
     df_primary,
-    title=f"Permutation Feature Importance — {selected_model_name}",
+    title=f"Permutation Feature Importance - {selected_model_name}",
     save_path=os.path.join(FIG_DIR, "feature_importance.png")
 )
 plt.show()""")
@@ -551,19 +581,20 @@ plt.show()""")
     # ---------------------------------------------------------------------------
     # Cell 29: Markdown Analysis on Feature Importance
     # ---------------------------------------------------------------------------
-    add_md("""### Analysis: Feature Importance & Interpretability
-#### Methodological Approach: Permutation Importance
-- **Permutation Importance on Test Set:** Because `HistGradientBoostingRegressor` builds trees using histogram bins rather than traditional split impurity metrics, model-agnostic permutation importance on the held-out test set serves as our primary interpretability metric.
-- **Why Permutation Importance is Superior:** Permutation importance evaluates how much model performance drops ($R^2$ decrease) when a feature's values are randomly shuffled. This avoids the cardinality bias inherent to Mean Decrease in Impurity (MDI) and directly measures the model's true predictive dependence on unseen data.
+    add_md("""### Analysis: Feature Importance & Exploratory Interpretation
+#### Methodological Distinction: Permutation Importance
+- **Exploratory Diagnostic Tool:** Permutation feature importance on the held-out test set is utilized here purely as an **exploratory interpretability tool**, not as an objective function for iterative feature selection or hyperparameter tuning (which would risk test-set contamination).
+- **Interpretation of Importance Values:** Permutation importance values represent the **mean decrease in the test evaluation score ($R^2$)** when each feature is randomly shuffled. They do **NOT** represent percentage shares or additive proportions of total variance. A score of ~1.693 indicates that shuffling `distance_km` degrades the test $R^2$ by 1.693 units on average across 10 permutations.
 
-#### Key Feature Drivers
-1. **Distance (`distance_km`):** Dominates the predictive hierarchy (accounting for over 50–65% of importance). In supply chain transit, geographic distance dictates the non-negotiable physical baseline duration.
-2. **Traffic Conditions (`traffic_level`):** The second strongest predictor. Congestion dynamically modulates transit speed, with severe traffic (`Jam`, `High`) dramatically inflating durations.
-3. **Route & Weather:** Account for substantial secondary interactions. Specific corridors and inclement weather (`Stormy`, `Snowy`) introduce friction that modifies base speed.
-4. **Parcel Weight & Carrier:** Provide fine-grained adjustments for depot handling and carrier dispatch efficiency.
+#### Observed Importance Ranking:
+1. **`distance_km` (Mean Drop: ~1.693):** Primary driver of model predictions. Shuffling distance destroys the core spatial baseline duration.
+2. **`traffic_level` (Mean Drop: ~0.232):** Dynamic velocity moderator.
+3. **`weather` (Mean Drop: ~0.160):** Atmospheric friction modifier.
+4. **`route` (Mean Drop: ~0.017) & `carrier` (Mean Drop: ~0.014):** Modest residual adjustments for specific corridor layouts and vendor schedules.
+5. **`parcel_weight_kg` (Mean Drop: ~0.005):** Minor handling overhead.
 
-#### Correlation vs. Causation Warning
-High predictive importance confirms strong statistical association, but **does not prove direct physical causation**. For example, a high importance score for `route` reflects the combined effects of speed limits, topography, toll stops, and urban density along that corridor, rather than an intrinsic defect of the route itself.""")
+#### Correlation vs. Causation Caution
+High predictive association confirms statistical correlation in the synthetic dataset, but **does not establish causal mechanisms**. Route and carrier importances reflect empirical assignment combinations rather than inherent route defects or vendor capabilities.""")
 
     # ---------------------------------------------------------------------------
     # Cell 30: Code - Operational Prediction Demonstration
@@ -606,18 +637,19 @@ scenario_unseen = {
     "distance_km": 100.0,
     "traffic_level": "Gridlock"
 }
-pred_uns = predict_delivery_time(final_pipeline, scenario_unseen)
 print(f"\\nScenario 3 (Edge Case: Novel Unseen Route, Carrier & Weather):")
+pred_uns = predict_delivery_time(final_pipeline, scenario_unseen)
 print(f" -> Predicted Duration: {pred_uns:.2f} hours ({pred_uns*60:.0f} minutes)")
-print(" -> Verification: The pipeline handled novel categories gracefully via handle_unknown='ignore'.")""")
+print(" -> Verification: Unseen categories emitted a UserWarning; encoder zero-filled indicators via handle_unknown='ignore'.")""")
 
     # ---------------------------------------------------------------------------
     # Cell 31: Markdown Analysis on Operational Deployment
     # ---------------------------------------------------------------------------
-    add_md("""### Analysis: Operational Usability & Edge-Case Resilience
-The inference function `predict_delivery_time()` demonstrates immediate practical value for distributor operations:
-- **Instantaneous Quoting:** Dispatchers can query the model in sub-millisecond response times upon customer order entry, producing accurate expected arrival timestamps.
-- **Fail-Safe Robustness:** When presented with previously unseen categorical levels (e.g., a newly onboarded carrier or an unmodeled emergency route), the pipeline does not throw an exception. The `OneHotEncoder(handle_unknown='ignore')` safely zero-fills the unknown indicators, allowing the model to generate a valid estimate grounded on distance, weight, and existing known features.""")
+    add_md("""### Analysis: Inference Resilience & Unseen Category Handling
+The inference function `predict_delivery_time()` demonstrates how the trained pipeline handles operational inputs:
+- **Known Inputs:** Queries with valid, observed categorical levels generate rapid predictions without warnings.
+- **Missing Value Handling:** Missing features in input dictionaries (e.g., unrecorded weather or weight) are safely imputed via the pipeline's in-fold imputers.
+- **Unseen Category Warnings:** When presented with unobserved categorical levels (e.g., `Route_Z_ExperimentalExpress`, `HyperLoopLogistics`), the encoder zero-fills their indicators via `handle_unknown='ignore'`. However, `predict_delivery_time()` detects this and explicitly warns the caller that **predictions on unseen categories represent unvalidated extrapolations**, ensuring users do not mistakenly assume the output is reliable merely because the pipeline executed without error.""")
 
     # ---------------------------------------------------------------------------
     # Cell 32: Markdown - Comprehensive Executive Summary
@@ -625,36 +657,39 @@ The inference function `predict_delivery_time()` demonstrates immediate practica
     add_md("""---
 ## 10. Comprehensive Executive Summary & Predictive Conclusions
 
+### Synthetic Data Disclosure
+> **Methodological Context:** This study is conducted on a synthetic benchmark dataset developed for an exploratory data science curriculum. While the statistical workflows, leakage prevention protocols, and evaluation metrics follow rigorous academic standards, all findings demonstrate **prototype feasibility** rather than real-world logistics accuracy.
+
 ### Answering the Primary Analytical Question
 > **"How accurately can delivery time be predicted using route, carrier, weather, parcel weight, distance, and traffic conditions?"**
 
-Based on rigorous 5-fold cross-validation and test set evaluation, delivery duration can be predicted with **high precision and practical reliability**:
-- **Variance Explained ($R^2$):** The selected HistGradientBoosting model explains **approximately 96%** ($R^2 \\approx 0.960$) of total delivery duration variance on held-out test data, vastly outperforming the naive baseline ($R^2 \\approx 0.00$) and improving significantly over linear regression ($R^2 \\approx 0.912$) and Random Forest ($R^2 \\approx 0.949$).
-- **Mean Absolute Error (MAE):** The average absolute error is **approximately 0.221 hours (13 minutes)**. For a regional logistics distribution network, an average prediction error of ~13 minutes provides commercially actionable precision for dynamic courier dispatching and accurate customer arrival estimates.
-- **Root Mean Squared Error (RMSE):** The RMSE is **approximately 0.353 hours (21 minutes)**, confirming that even when larger transit delays occur, prediction errors remain bounded and well-controlled.
+On this synthetic dataset, delivery duration can be predicted with high consistency between cross-validation and held-out test partitions:
+- **Variance Explained ($R^2$):** The selected HistGradientBoosting model accounts for **approximately 96%** ($R^2 \\approx 0.960$) of delivery duration variance on held-out test data, outperforming the mean baseline ($R^2 \\approx 0.00$) and improving over linear regression ($R^2 \\approx 0.912$) and Random Forest ($R^2 \\approx 0.949$).
+- **Mean Absolute Error (MAE):** The average absolute error is **approximately 0.221 hours (13.3 minutes)** on held-out test deliveries.
+- **Root Mean Squared Error (RMSE):** The RMSE is **approximately 0.353 hours (21.2 minutes)**, reflecting bounded error dispersion across the network.
 
 ---
 
 ### Key Residual Diagnostic Findings
-1. **Homoscedasticity vs. Heteroscedasticity:** Prediction variance mildly increases with distance and trip duration. Short-haul shipments exhibit virtually zero error, while longer journeys accumulate slight operational volatility.
+1. **Homoscedasticity vs. Heteroscedasticity:** Prediction variance mildly increases with distance and trip duration. Short-haul shipments exhibit narrow error dispersion, while longer journeys accumulate operational volatility.
 2. **Identification of Weak Prediction Segments:**
    - **Severe Weather Events:** Shipments dispatched during `Stormy` or `Snowy` conditions exhibit the highest prediction error and largest positive residuals (underpredictions).
-   - **Corridor Dispersion:** Long-distance corridors (`Route_North`, `Route_East`) display marginally wider residual spreads than central or shorter routes.
-3. **Absence of Systematic Carrier Bias:** Residuals across all four carriers (`ApexDelivery`, `FastShip`, `NationalExpress`, `QuickLogistics`) are symmetrically distributed with means near zero. Differences in delivery times correlate with route assignments, weather, and distance rather than carrier performance discrepancies.
+   - **Corridor Dispersion:** Long-distance corridors (`Route_North`, `Route_East`) display wider residual spreads than central or shorter routes.
+3. **Carrier Group Reporting:** Residual means across all four carriers cluster between $-0.014$ and $+0.026$ hours, with MAE between 0.202h and 0.264h. These metrics do not establish vendor neutrality or competence, as carrier assignments correlate with assigned route distances and conditions.
 
 ---
 
-### Strategic Recommendations for the Distributor
-1. **Dynamic SLA Quoting:** Transition from static delivery estimates to dynamic ML predictions driven by real-time route, weather, and traffic conditions.
-2. **Weather Safety Buffers:** Automatically apply a 30-to-45-minute contingency buffer to customer ETA notifications whenever severe weather alerts (`Snowy` or `Stormy`) are active along the transit corridor.
-3. **Corridor-Specific Buffer Scheduling:** Dynamically scale dispatch lead times on longer routes (`Route_North`, `Route_East`) during peak congestion windows (`Jam`, `High`).
-4. **Outlier Incident Audits:** Rather than disregarding high-residual deliveries, use positive residuals $> 1.5$ hours as automated triggers for supply chain disruption root-cause investigations.
+### Strategic Prototype Recommendations for Distributor Operations
+1. **Dynamic ETA Quoting Prototype:** Prototype dynamic transit time predictions driven by corridor distance, weather, and congestion conditions rather than static distance tables.
+2. **Weather Safety Buffers:** Apply a 30-to-45-minute contingency buffer to customer ETA notifications whenever severe weather alerts (`Snowy` or `Stormy`) are active along the transit corridor.
+3. **Corridor-Specific Buffer Scheduling:** Scale dispatch lead times on longer routes (`Route_North`, `Route_East`) during peak congestion windows (`Jam`, `High`).
+4. **Outlier Incident Audits:** Use positive residuals $> 1.5$ hours as automated triggers for operational disruption investigations.
 
 ---
 
 ### Limitations and Future Enhancements
-- **Static vs. Real-Time Dynamic Routing:** The current dataset assumes static route and weather snapshots at dispatch. Incorporating dynamic telematics (GPS pings, live highway sensors) could further reduce long-haul variance.
-- **Temporal Validation:** When transitioning to production, the distributor should implement rolling chronological cross-validation to continuously monitor and adapt to seasonal and macroeconomic shifts.""")
+- **Synthetic vs. Empirical Data:** Validating model utility for production deployment requires real-world telematics, GPS traces, and actual highway toll data.
+- **Temporal Validation:** A real-world production pipeline should implement rolling chronological cross-validation to adapt to seasonal shifts and macroeconomic factors.""")
 
 
     with open(output_path, "w", encoding="utf-8") as f:

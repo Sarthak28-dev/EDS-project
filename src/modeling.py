@@ -9,6 +9,7 @@ feature importance extraction, and safe operational inference for delivery time 
 
 from typing import Dict, List, Tuple, Any, Optional
 import os
+import warnings
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
@@ -56,32 +57,29 @@ def load_delivery_data(
     primary_path: str = "data/processed/modelling_delivery_data.csv"
 ) -> pd.DataFrame:
     """
-    Load delivery dataset from the specified path or standard production paths.
+    Load the primary delivery modeling dataset strictly.
 
-    Priority:
-    1. Explicit filepath argument (if provided).
-    2. 'data/processed/modelling_delivery_data.csv' (Person 1's unimputed ML modelling dataset).
-    3. 'data/processed/cleaned_delivery_data.csv' (Person 1's descriptive cleaned dataset).
+    Default: 'data/processed/modelling_delivery_data.csv' resolved relative to repository root.
+    Preserves explicit 'filepath' overrides.
+    Silent fallback to 'cleaned_delivery_data.csv' is strictly prohibited.
+    Raises FileNotFoundError if the file does not exist.
     """
-    candidates = []
-    if filepath:
-        candidates.append(filepath)
-    candidates.extend([
-        primary_path,
-        "data/processed/cleaned_delivery_data.csv",
-        os.path.join(os.path.dirname(__file__), "..", primary_path),
-        os.path.join(os.path.dirname(__file__), "..", "data", "processed", "cleaned_delivery_data.csv"),
-    ])
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-    for p in candidates:
-        if os.path.exists(p):
-            df = pd.read_csv(p)
-            print(f"[load_delivery_data] Successfully loaded {len(df)} records from: {p}")
-            return df
+    if filepath is not None:
+        target_path = filepath if os.path.isabs(filepath) else os.path.abspath(os.path.join(repo_root, filepath))
+    else:
+        target_path = os.path.abspath(os.path.join(repo_root, primary_path))
 
-    raise FileNotFoundError(
-        f"Could not find delivery dataset. Looked in: {candidates}"
-    )
+    if not os.path.exists(target_path):
+        raise FileNotFoundError(
+            f"Primary modelling dataset not found at: '{target_path}'. "
+            "Silent fallback to 'cleaned_delivery_data.csv' is disabled to prevent accidental evaluation on descriptive data."
+        )
+
+    df = pd.read_csv(target_path)
+    print(f"[load_delivery_data] Successfully loaded {len(df)} records from: {target_path}")
+    return df
 
 
 def prepare_features(
@@ -357,21 +355,36 @@ def analyze_residuals_by_slice(
     residual_col: str = "residual"
 ) -> pd.DataFrame:
     """
-    Compute residual summary statistics across categorical slices (route, carrier, weather, etc.)
-    including Mean Residual (bias), Mean Absolute Error (dispersion), RMSE, and 95th percentile residual.
+    Compute residual summary statistics across categorical slices (e.g., route, carrier, weather).
+
+    Residual Definition and Direction:
+        Residual = Actual Delivery Time - Predicted Delivery Time (e_i = y_i - y_hat_i)
+        - Positive Residual (e_i > 0): Actual duration exceeded prediction (Underprediction / Delivery Delay).
+        - Negative Residual (e_i < 0): Actual duration was less than prediction (Overprediction / Early Arrival).
+
+    Computed Statistics:
+        - Count: Number of observations in this categorical group.
+        - Mean_Residual: Signed mean residual (bias). Values near 0 indicate lack of systematic bias.
+        - Std_Residual: Sample standard deviation of residuals (dispersion / uncertainty).
+        - MAE: Mean Absolute Error (average magnitude of prediction error in hours).
+        - RMSE: Root Mean Squared Error (penalizes larger errors).
+        - P95_Absolute_Error: 95th percentile absolute error (practical upper bound for 95% of predictions).
+        - Max_Overrun: Maximum positive residual (longest unexpected delay in hours).
+        - Max_Underrun: Minimum negative residual (largest overprediction / earliest arrival in hours).
     """
     if slice_col not in df_eval.columns:
         raise KeyError(f"Slice column '{slice_col}' not found in evaluation DataFrame.")
 
-    grouped = df_eval.groupby(slice_col)[residual_col]
+    grouped = df_eval.groupby(slice_col, observed=False)[residual_col]
     summary = grouped.agg(
         Count="count",
         Mean_Residual=lambda r: float(np.mean(r)),
         Std_Residual=lambda r: float(np.std(r, ddof=1)) if len(r) > 1 else 0.0,
         MAE=lambda r: float(np.mean(np.abs(r))),
         RMSE=lambda r: float(np.sqrt(np.mean(r**2))),
-        Max_Overrun=lambda r: float(np.max(r)),
-        Max_Underrun=lambda r: float(np.min(r)),
+        P95_Absolute_Error=lambda r: float(np.percentile(np.abs(r), 95)) if len(r) > 0 else 0.0,
+        Max_Overrun=lambda r: float(np.max(r)) if len(r) > 0 else 0.0,
+        Max_Underrun=lambda r: float(np.min(r)) if len(r) > 0 else 0.0,
     ).reset_index()
 
     return summary.sort_values(by="MAE", ascending=False).reset_index(drop=True)
@@ -455,7 +468,8 @@ def predict_delivery_time(
     - distance_km (float)
     - traffic_level (str)
 
-    Safely handles unseen categorical levels using the pipeline's handle_unknown='ignore' configuration.
+    Safely handles unseen categorical levels using the pipeline's handle_unknown='ignore' configuration,
+    while explicitly detecting and warning about unobserved categories.
     Returns predicted delivery duration in hours.
     """
     if isinstance(input_data, dict):
@@ -470,6 +484,35 @@ def predict_delivery_time(
     missing = [col for col in required if col not in df_input.columns]
     if missing:
         raise ValueError(f"Input is missing required features: {missing}")
+
+    # Inspect fitted encoder to detect unseen categories
+    unseen_warnings = {}
+    try:
+        preprocessor = pipeline.named_steps.get("preprocessor")
+        if preprocessor is not None and hasattr(preprocessor, "named_transformers_"):
+            cat_transformer = preprocessor.named_transformers_.get("cat")
+            if cat_transformer is not None and hasattr(cat_transformer, "named_steps"):
+                onehot = cat_transformer.named_steps.get("onehot")
+                if onehot is not None and hasattr(onehot, "categories_"):
+                    for i, col in enumerate(CATEGORICAL_FEATURES):
+                        if col in df_input.columns:
+                            known_cats = set(onehot.categories_[i])
+                            vals = df_input[col].dropna().unique()
+                            unseen = [v for v in vals if v not in known_cats]
+                            if unseen:
+                                unseen_warnings[col] = unseen
+    except Exception:
+        pass
+
+    if unseen_warnings:
+        warnings.warn(
+            f"Input features contain unobserved categorical level(s): {unseen_warnings}. "
+            "The OneHotEncoder step will zero-fill these indicators via handle_unknown='ignore'. "
+            "Caution: Predictions with unseen categories are unvalidated extrapolations "
+            "and should not be assumed reliable solely because the encoder processed them without error.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     preds = pipeline.predict(df_input[required])
     if single_prediction:

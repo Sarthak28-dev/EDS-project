@@ -4,6 +4,7 @@ Audited and updated to validate against Person 1's authentic modelling_delivery_
 """
 
 import unittest
+import warnings
 import numpy as np
 import pandas as pd
 from src.modeling import (
@@ -36,6 +37,17 @@ class TestRouteWiseModeling(unittest.TestCase):
         cls.X_train, cls.X_test, cls.y_train, cls.y_test = split_data(
             cls.X, cls.y, test_size=0.2, random_state=42
         )
+
+    def test_strict_dataset_loading_no_silent_fallback(self):
+        # Calling with missing primary path must raise FileNotFoundError, NOT fallback to cleaned data
+        with self.assertRaises(FileNotFoundError):
+            load_delivery_data(primary_path="data/processed/nonexistent_modelling_file.csv")
+
+        # Default call must load authentic modelling dataset with 7,136 records and intentional missingness
+        df_default = load_delivery_data()
+        self.assertEqual(len(df_default), 7136)
+        self.assertGreater(df_default["parcel_weight_kg"].isna().sum(), 0)
+        self.assertGreater(df_default["weather"].isna().sum(), 0)
 
     def test_dataset_loaded_and_schema_contract(self):
         # Verify row count matches Person 1's 7,136 records
@@ -159,8 +171,13 @@ class TestRouteWiseModeling(unittest.TestCase):
         self.assertIn("route", route_slice.columns)
         self.assertIn("Count", route_slice.columns)
         self.assertIn("Mean_Residual", route_slice.columns)
+        self.assertIn("Std_Residual", route_slice.columns)
         self.assertIn("MAE", route_slice.columns)
         self.assertIn("RMSE", route_slice.columns)
+        self.assertIn("P95_Absolute_Error", route_slice.columns)
+        self.assertIn("Max_Overrun", route_slice.columns)
+        self.assertIn("Max_Underrun", route_slice.columns)
+        self.assertGreaterEqual(route_slice["P95_Absolute_Error"].min(), 0.0)
 
     def test_feature_importance_extraction(self):
         hgb_pipeline = get_model_candidates(random_state=42)["HistGradientBoosting"]
@@ -178,7 +195,7 @@ class TestRouteWiseModeling(unittest.TestCase):
         pipeline = get_model_candidates(random_state=42)["HistGradientBoosting"]
         pipeline.fit(self.X_train, self.y_train)
 
-        # Normal prediction input using authentic categories
+        # 1. Normal prediction input using authentic known categories should NOT emit warning
         sample_input = {
             "route": "Route_Central",
             "carrier": "ApexDelivery",
@@ -187,11 +204,14 @@ class TestRouteWiseModeling(unittest.TestCase):
             "distance_km": 85.0,
             "traffic_level": "Jam"
         }
-        pred = predict_delivery_time(pipeline, sample_input)
+        with warnings.catch_warnings(record=True) as recorded_warnings:
+            warnings.simplefilter("always")
+            pred = predict_delivery_time(pipeline, sample_input)
+            self.assertEqual(len(recorded_warnings), 0, "Known categories unexpectedly triggered a warning!")
         self.assertIsInstance(pred, float)
         self.assertGreater(pred, 0.0)
 
-        # Edge case: novel unseen categorical levels should NOT throw an error
+        # 2. Edge case: novel unseen categorical levels should emit a UserWarning
         unseen_input = {
             "route": "Route_Galaxy",
             "carrier": "QuantumDrone",
@@ -200,11 +220,17 @@ class TestRouteWiseModeling(unittest.TestCase):
             "distance_km": 50.0,
             "traffic_level": "Gridlock"
         }
-        pred_unseen = predict_delivery_time(pipeline, unseen_input)
+        with warnings.catch_warnings(record=True) as recorded_warnings:
+            warnings.simplefilter("always")
+            pred_unseen = predict_delivery_time(pipeline, unseen_input)
+            self.assertGreaterEqual(len(recorded_warnings), 1)
+            self.assertTrue(any(issubclass(w.category, UserWarning) for w in recorded_warnings))
+            warning_msg = str(recorded_warnings[0].message)
+            self.assertIn("unobserved categorical level", warning_msg)
         self.assertIsInstance(pred_unseen, float)
         self.assertGreater(pred_unseen, 0.0)
 
-        # Missing values in input dictionary should be gracefully imputed by pipeline
+        # 3. Missing values in input dictionary should be gracefully imputed by pipeline without unseen warning
         missing_input = {
             "route": "Route_North",
             "carrier": "FastShip",
@@ -213,7 +239,10 @@ class TestRouteWiseModeling(unittest.TestCase):
             "distance_km": 110.0,
             "traffic_level": "High"
         }
-        pred_missing = predict_delivery_time(pipeline, missing_input)
+        with warnings.catch_warnings(record=True) as recorded_warnings:
+            warnings.simplefilter("always")
+            pred_missing = predict_delivery_time(pipeline, missing_input)
+            self.assertEqual(len(recorded_warnings), 0, "Missing values triggered an unintended unseen warning!")
         self.assertIsInstance(pred_missing, float)
         self.assertGreater(pred_missing, 0.0)
 
