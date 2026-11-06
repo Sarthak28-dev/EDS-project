@@ -83,7 +83,7 @@ def audit_raw_data(df: pd.DataFrame) -> pd.DataFrame:
         "Issue Description": "Extreme parcel weight outliers (>100 kg)",
         "Records Affected": extreme_weights,
         "Severity": "Medium",
-        "Details": "Suspected gram-to-kg unit conversion errors"
+        "Details": "Two-decimal shift / omitted decimal point keystroke error (100x multiplier)"
     })
 
     # 7. Inconsistent Carrier labels
@@ -133,7 +133,7 @@ def audit_raw_data(df: pd.DataFrame) -> pd.DataFrame:
     return audit_df
 
 
-def clean_delivery_data(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def clean_delivery_data(raw_df: pd.DataFrame, impute: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Execute transparent, justified cleaning transformations on the raw delivery dataset.
 
@@ -141,6 +141,9 @@ def clean_delivery_data(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
     ----------
     raw_df : pd.DataFrame
         Raw delivery DataFrame loaded from disk.
+    impute : bool, default True
+        If True, imputes missing values in parcel_weight_kg and weather (for descriptive EDA/OLAP).
+        If False, preserves NaNs to allow Person 2 to perform fold-level imputation inside ML pipelines.
 
     Returns
     -------
@@ -210,26 +213,35 @@ def clean_delivery_data(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
     extreme_weight_count = int(extreme_weight_mask.sum())
     df.loc[extreme_weight_mask, "parcel_weight_kg"] = (df.loc[extreme_weight_mask, "parcel_weight_kg"] / 100.0).round(2)
     cleaning_log.append({
-        "Step": "3b. Weight Unit Normalization",
-        "Problem Identified": "Extreme parcel weights (> 100 kg, e.g. 750 kg) due to scale software recording grams instead of kg.",
+        "Step": "3b. Weight Decimal Shift Normalization",
+        "Problem Identified": "Extreme parcel weights (> 100 kg, e.g. 289 kg instead of 2.89 kg) due to omitted decimal point or 100x keystroke shift error.",
         "Records Affected": extreme_weight_count,
-        "Action Taken": "Divided extreme observations by 100.0 to restore realistic kilogram scale.",
-        "Justification": "Courier standard parcels have an upper limit of 40 kg; magnitude matched 100x scale conversion error."
+        "Action Taken": "Divided extreme observations by 100.0 to restore true nominal decimal weight.",
+        "Justification": "Standard parcel couriers enforce a 40 kg contract threshold; values mapped exactly to a 100x decimal shift error."
     })
 
     # 3c. Missing parcel weights
     missing_weight_mask = df["parcel_weight_kg"].isnull()
     missing_weight_count = int(missing_weight_mask.sum())
-    # Route-specific median imputation
-    route_medians = df.groupby("route")["parcel_weight_kg"].transform("median")
-    df["parcel_weight_kg"] = df["parcel_weight_kg"].fillna(route_medians).round(2)
-    cleaning_log.append({
-        "Step": "3c. Missing Weight Imputation",
-        "Problem Identified": "Unrecorded parcel weights (NaN) due to intermittent scale sensor disconnects.",
-        "Records Affected": missing_weight_count,
-        "Action Taken": "Imputed missing weights with the route-specific median weight.",
-        "Justification": "Median is robust against extreme values, and routes exhibit characteristic parcel weight distributions."
-    })
+    if impute:
+        # Route-specific median imputation for descriptive analysis
+        route_medians = df.groupby("route")["parcel_weight_kg"].transform("median")
+        df["parcel_weight_kg"] = df["parcel_weight_kg"].fillna(route_medians).round(2)
+        cleaning_log.append({
+            "Step": "3c. Missing Weight Imputation",
+            "Problem Identified": "Unrecorded parcel weights (NaN) due to intermittent scale sensor disconnects.",
+            "Records Affected": missing_weight_count,
+            "Action Taken": "Imputed missing weights with route-specific median weight for descriptive analysis.",
+            "Justification": "Median is robust against extreme values. (Note: For ML modeling, unimputed data is provided to allow fold-level imputation)."
+        })
+    else:
+        cleaning_log.append({
+            "Step": "3c. Missing Weight Preservation (ML Handoff)",
+            "Problem Identified": "Unrecorded parcel weights (NaN).",
+            "Records Affected": missing_weight_count,
+            "Action Taken": "Preserved NaNs to prevent pre-split data leakage in regression modeling.",
+            "Justification": "Allows Person 2 to fit group/iterative imputer strictly on training folds inside cross-validation."
+        })
 
     # -------------------------------------------------------------
     # Step 4: Standardize Inconsistent Carrier Naming & Casing
@@ -302,27 +314,36 @@ def clean_delivery_data(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
     missing_weather_mask = df["weather"].isnull()
     missing_weather_count = int(missing_weather_mask.sum())
 
-    # Impute missing weather using route and month mode
-    route_month_mode = df[~missing_weather_mask].groupby([df["route"], order_months])["weather"].agg(
-        lambda x: x.mode().iloc[0] if not x.empty else "Clear"
-    )
-    for (r, m), mode_w in route_month_mode.items():
-        cond = missing_weather_mask & (df["route"] == r) & (order_months == m)
-        df.loc[cond, "weather"] = mode_w
-    # Fallback to general mode if any remaining
-    if df["weather"].isnull().sum() > 0:
-        df["weather"] = df["weather"].fillna("Clear")
+    if impute:
+        # Impute missing weather using route and month mode for descriptive analysis
+        route_month_mode = df[~missing_weather_mask].groupby([df["route"], order_months])["weather"].agg(
+            lambda x: x.mode().iloc[0] if not x.empty else "Clear"
+        )
+        for (r, m), mode_w in route_month_mode.items():
+            cond = missing_weather_mask & (df["route"] == r) & (order_months == m)
+            df.loc[cond, "weather"] = mode_w
+        # Fallback to general mode if any remaining
+        if df["weather"].isnull().sum() > 0:
+            df["weather"] = df["weather"].fillna("Clear")
 
-    cleaning_log.append({
-        "Step": "6. Weather Normalization & Seasonal Imputation",
-        "Problem Identified": "Non-standard meteorological categories ('Thunderstorm', 'Sunny_Windy') and missing observations (~2.8%).",
-        "Records Affected": weather_typo_count + missing_weather_count,
-        "Action Taken": "Mapped variants to canonical classes ('Stormy', 'Clear') and imputed nulls with the route-and-month mode.",
-        "Justification": "Weather follows strong regional and seasonal patterns; mode by corridor and month preserves empirical distribution."
-    })
+        cleaning_log.append({
+            "Step": "6. Weather Normalization & Seasonal Imputation",
+            "Problem Identified": "Non-standard meteorological categories ('Thunderstorm', 'Sunny_Windy') and missing observations (~2.8%).",
+            "Records Affected": weather_typo_count + missing_weather_count,
+            "Action Taken": "Mapped variants to canonical classes ('Stormy', 'Clear') and imputed nulls with route-month mode for descriptive analysis.",
+            "Justification": "Standardizes categories. (Note: For ML modeling, unimputed data is provided to allow fold-level imputation)."
+        })
+    else:
+        cleaning_log.append({
+            "Step": "6. Weather Normalization & Preservation (ML Handoff)",
+            "Problem Identified": "Non-standard categories and missing observations (~2.8%).",
+            "Records Affected": weather_typo_count + missing_weather_count,
+            "Action Taken": "Normalized non-standard categories while preserving NaNs for Person 2's fold-level imputation pipeline.",
+            "Justification": "Prevents data leakage across cross-validation splits."
+        })
 
     # -------------------------------------------------------------
-    # Step 7: Re-verify Timestamps, Target Duration, and SLA Delay Status
+    # Step 7: Re-verify Timestamps, Target Duration, and Ground-Truth SLA Delay Status
     # -------------------------------------------------------------
     # Convert timestamps to ensure format and calculate exact hours
     disp_dt = pd.to_datetime(df["dispatch_time"])
@@ -330,16 +351,18 @@ def clean_delivery_data(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
     computed_hours = np.round((deliv_dt - disp_dt).dt.total_seconds() / 3600.0, 2)
     df["delivery_time_hours"] = computed_hours
 
-    # Ensure delayed flag strictly aligns with corridor SLA rules:
-    # Route SLAs:
-    sla_map = {
-        "Route_Central": 1.9,
-        "Route_North": 3.4,
-        "Route_South": 2.8,
-        "Route_East": 5.2,
-        "Route_West": 3.5
+    # Ensure delayed flag strictly aligns with distance-indexed route SLA physical formula:
+    # expected_sla = (distance / route_base_speed) * 1.15 + sla_buffer_hr
+    routes_config = {
+        "Route_Central": {"base_speed_kmh": 36.0, "sla_buffer_hr": 0.65},
+        "Route_North": {"base_speed_kmh": 62.0, "sla_buffer_hr": 0.85},
+        "Route_South": {"base_speed_kmh": 58.0, "sla_buffer_hr": 0.80},
+        "Route_East": {"base_speed_kmh": 68.0, "sla_buffer_hr": 1.10},
+        "Route_West": {"base_speed_kmh": 55.0, "sla_buffer_hr": 0.90},
     }
-    expected_sla = df["route"].map(sla_map)
+    base_speeds = df["route"].map(lambda r: routes_config[r]["base_speed_kmh"])
+    sla_buffers = df["route"].map(lambda r: routes_config[r]["sla_buffer_hr"])
+    expected_sla = (df["distance_km"] / base_speeds) * 1.15 + sla_buffers
     df["delayed"] = (df["delivery_time_hours"] > expected_sla).astype(int)
 
     # Final enforcement of column order per data contract
@@ -353,9 +376,9 @@ def clean_delivery_data(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
 
     cleaning_log.append({
         "Step": "7. Final Schema & Integrity Verification",
-        "Problem Identified": "Potential drift in calculated elapsed durations and target contract alignment.",
+        "Problem Identified": "Potential drift in calculated elapsed durations and SLA delay flag consistency.",
         "Records Affected": len(df),
-        "Action Taken": "Re-verified timestamp delta math, recomputed delayed status against corridor SLA benchmarks, and validated exact 14 columns.",
+        "Action Taken": "Re-verified timestamp delta math, recomputed distance-indexed SLA threshold benchmarks, and validated exact 14 columns.",
         "Justification": "Guarantees mathematical precision for Person 2's regression models and zero target leakage."
     })
 
@@ -366,7 +389,8 @@ def clean_delivery_data(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
 def main():
     parser = argparse.ArgumentParser(description="Audit and clean the RouteWise delivery dataset.")
     parser.add_argument("--raw", type=str, default="data/raw/delivery_data.csv", help="Path to raw dataset")
-    parser.add_argument("--output", type=str, default="data/processed/cleaned_delivery_data.csv", help="Path to cleaned dataset")
+    parser.add_argument("--output", type=str, default="data/processed/cleaned_delivery_data.csv", help="Path to cleaned descriptive dataset")
+    parser.add_argument("--model_output", type=str, default="data/processed/modelling_delivery_data.csv", help="Path to unimputed dataset for ML pipeline")
     parser.add_argument("--audit_out", type=str, default="outputs/tables/data_audit_summary.csv", help="Audit table destination")
     parser.add_argument("--log_out", type=str, default="outputs/tables/cleaning_log.csv", help="Cleaning log destination")
     args = parser.parse_args()
@@ -386,12 +410,18 @@ def main():
     print(f"Audit report saved to: {args.audit_out}")
     print(audit_df.to_string(index=False))
 
-    print("\nExecuting systematic cleaning pipeline...")
-    clean_df, log_df = clean_delivery_data(raw_df)
+    print("\nExecuting systematic cleaning pipeline (Descriptive Imputed Dataset)...")
+    clean_df, log_df = clean_delivery_data(raw_df, impute=True)
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     clean_df.to_csv(args.output, index=False)
-    print(f"Cleaned dataset saved to: {args.output}")
+    print(f"Descriptive cleaned dataset saved to: {args.output}")
+
+    print("\nExecuting systematic cleaning pipeline (Modelling Unimputed Dataset for Person 2)...")
+    model_df, _ = clean_delivery_data(raw_df, impute=False)
+    Path(args.model_output).parent.mkdir(parents=True, exist_ok=True)
+    model_df.to_csv(args.model_output, index=False)
+    print(f"Modelling dataset (unimputed NaNs preserved for fold-level imputation) saved to: {args.model_output}")
 
     Path(args.log_out).parent.mkdir(parents=True, exist_ok=True)
     log_df.to_csv(args.log_out, index=False)
@@ -400,7 +430,8 @@ def main():
     print("\nCleaned Dataset Verification:")
     print(f"- Initial Raw Records: {len(raw_df)}")
     print(f"- Final Clean Records: {len(clean_df)}")
-    print(f"- Null values in clean dataset: {clean_df.isnull().sum().sum()}")
+    print(f"- Null values in descriptive clean dataset: {clean_df.isnull().sum().sum()}")
+    print(f"- Null values in modelling dataset (for CV imputation): {model_df.isnull().sum().to_dict()}")
     print(f"- Duplicate IDs in clean dataset: {clean_df['delivery_id'].duplicated().sum()}")
     print(f"- Final Schema Columns ({len(clean_df.columns)}): {list(clean_df.columns)}")
 

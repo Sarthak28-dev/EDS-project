@@ -87,17 +87,29 @@ def run_weather_hypothesis_tests(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
         },
         {
             "Test Name": "Kruskal-Wallis H-Test (Non-Parametric)",
-            "Hypothesis Tested": "Equal median delivery duration ranks across weather conditions",
+            "Hypothesis Tested": "Stochastic equality of delivery duration distributions across weather conditions",
             "Test Statistic": round(float(kw_stat), 4),
             "p-value": float(kw_p),
             "Significant (alpha=0.05)": bool(kw_p < 0.05),
             "Effect Size": f"Epsilon-sq = {epsilon_squared:.4f}",
-            "Conclusion": "Reject H0: Statistically significant rank differences" if kw_p < 0.05 else "Fail to reject H0"
+            "Conclusion": "Reject H0: Statistically significant rank differences / stochastic dominance (heteroscedasticity precludes strict median equality)" if kw_p < 0.05 else "Fail to reject H0"
         }
     ]
     summary_df = pd.DataFrame(tests_summary)
 
-    # 5. Post-Hoc Pairwise Comparisons (Mann-Whitney U with Bonferroni correction)
+    # 5. Post-Hoc Pairwise Comparisons using Dunn's Test (1964) with Bonferroni Correction
+    # Dunn's test uses pooled Kruskal-Wallis mean ranks and tie-corrected variance
+    ranks = stats.rankdata(df["delivery_time_hours"])
+    df_temp = df.copy()
+    df_temp["_rank"] = ranks
+    mean_ranks = df_temp.groupby("weather")["_rank"].mean()
+    group_sizes = df_temp.groupby("weather")["_rank"].count()
+
+    N = len(df)
+    _, tie_counts = np.unique(ranks, return_counts=True)
+    tie_corr = np.sum(tie_counts**3 - tie_counts) / (12 * (N - 1))
+    pooled_var = (N * (N + 1) / 12) - tie_corr
+
     num_comparisons = (k * (k - 1)) // 2
     bonferroni_alpha = 0.05 / num_comparisons
 
@@ -106,19 +118,23 @@ def run_weather_hypothesis_tests(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
         for j in range(i + 1, k):
             name_a, vals_a = weather_names[i], weather_groups[i]
             name_b, vals_b = weather_names[j], weather_groups[j]
-            u_stat, u_p = stats.mannwhitneyu(vals_a, vals_b, alternative="two-sided")
             mean_diff = float(np.mean(vals_a) - np.mean(vals_b))
 
-            # Rank-biserial correlation effect size r = 1 - (2U / (n1 * n2))
-            rank_biserial = 1.0 - (2.0 * u_stat) / (len(vals_a) * len(vals_b))
+            # Dunn's z-statistic
+            rank_diff = float(mean_ranks[name_a] - mean_ranks[name_b])
+            se_dunn = float(np.sqrt(pooled_var * (1.0 / group_sizes[name_a] + 1.0 / group_sizes[name_b])))
+            z_dunn = rank_diff / se_dunn
+            p_raw = float(2.0 * (1.0 - stats.norm.cdf(abs(z_dunn))))
+            p_adj = float(min(1.0, p_raw * num_comparisons))
 
             pairwise_list.append({
                 "Comparison": f"{name_a} vs. {name_b}",
                 "Mean Difference (Hrs)": round(mean_diff, 3),
-                "U Statistic": round(float(u_stat), 1),
-                "Raw p-value": float(u_p),
-                "Bonferroni Significant (alpha=0.005)": bool(u_p < bonferroni_alpha),
-                "Rank-Biserial Correlation (r)": round(float(rank_biserial), 3)
+                "Rank Difference": round(rank_diff, 2),
+                "Dunn z Statistic": round(z_dunn, 3),
+                "Raw p-value": p_raw,
+                "Bonferroni-Adjusted p-value": p_adj,
+                "Significant (alpha_adj=0.005)": bool(p_adj < 0.05)
             })
     pairwise_df = pd.DataFrame(pairwise_list)
 

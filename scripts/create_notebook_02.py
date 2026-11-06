@@ -237,7 +237,8 @@ ax.set_ylabel("Mean Delivery Time (Hours)")
 plt.show()"""
     executor.add_code(nb, code_p2)
     executor.add_markdown(nb, """**Analytical Interpretation:**  
-`FastShip` achieves the lowest average delivery duration ($3.07$ hours), closely followed by `ApexDelivery` ($3.20$ hours) and `QuickLogistics` ($3.31$ hours), while `NationalExpress` trails with the highest average transit time ($3.48$ hours). The tight $95\\%$ confidence intervals indicate consistent operational pacing across all four carriers. While absolute differences appear modest ($~0.41$ hour spread), in high-throughput logistics, a $12\\%$ speed advantage translates to substantial operational turnaround savings.""")
+`FastShip` achieves the lowest average delivery duration ($3.07$ hours), closely followed by `ApexDelivery` ($3.20$ hours) and `QuickLogistics` ($3.31$ hours), while `NationalExpress` exhibits the highest average transit time ($3.48$ hours). The tight $95\\%$ confidence intervals indicate consistent operational pacing across all four carriers.  
+*(Methodological Note: Within our parameterized synthetic data generation engine, carriers were assigned velocity multipliers ranging from $0.94\\times$ for FastShip to $1.06\\times$ for NationalExpress. The analysis confirms that our cleaning and grouping pipeline accurately recovers this simulated operational delta without distortion.)*""")
 
     # Plot 3
     executor.add_markdown(nb, """### Visualization 3: Delivery Duration Across Transit Routes""")
@@ -419,7 +420,8 @@ ax.legend(lines_1 + lines_2, labels_1 + labels_2, loc="upper right", frameon=Tru
 plt.show()"""
     executor.add_code(nb, code_p9)
     executor.add_markdown(nb, """**Analytical Interpretation:**  
-Temporal tracking over the six-month observation window demonstrates stable macro-level operational metrics: weekly mean delivery duration oscillates tightly between $3.1$ and $3.4$ hours, while weekly delay rates fluctuate around $16-21\\%$. Periodic spikes in late winter (February) reflect regional snow storm clusters that temporarily elevated network-wide SLA breaches.""")
+Temporal tracking over the six-month observation window demonstrates stationary operational performance: weekly mean delivery duration remains stable between $3.1$ and $3.4$ hours, while weekly delay rates fluctuate around $26-33\\%$.  
+*(Methodological Verification: In the synthetic data generation engine, weather conditions and order volumes were sampled with stationary, time-invariant probabilities across all calendar weeks. The observed week-to-week variations represent standard stochastic pseudo-random fluctuation rather than actual seasonal meteorological trends like winter storm clusters.)*""")
 
     # OLAP Section
     executor.add_markdown(nb, """---
@@ -502,13 +504,13 @@ Based on the empirical findings from our cleaned dataset and OLAP cross-tabulati
 - **Empirical Evidence:**  
   `Route_East` (intercity freight corridor, mean distance $255.4$ km) averages $4.50$ hours in delivery duration, compared to `Route_Central` (urban metro corridor, mean distance $34.8$ km) which averages $1.39$ hours. Across all routes, distance alone accounts for $77.8\\%$ of the direct variance in transit duration ($r = 0.882$).
 - **Supply Chain Operational Context:**  
-  The distributor's five corridors operate under fundamentally distinct spatial topographies. Trying to apply uniform SLA standards across all corridors is mathematically flawed. Furthermore, longer routes compound operational exposure to en-route hazards: `Route_East` experiences a $24.8\\%$ delay rate compared to `Route_Central`'s $11.7\\%$. Dynamic SLA re-baselining based on corridor distance is urgently recommended.
+  The distributor's five corridors operate under fundamentally distinct spatial topographies. Applying uniform SLA standards across corridors is mathematically flawed. Furthermore, longer routes compound operational exposure to en-route hazards: `Route_East` experiences a $38.6\\%$ delay rate compared to `Route_Central`'s $18.7\\%$. Dynamic SLA re-baselining based on corridor distance is urgently recommended.
 
 ---
 
 ### Pattern 2: Severe Weather (Snow/Storms) and Traffic (Jam) Exert Multiplicative Compounding Penalties
 - **Empirical Evidence:**  
-  In clear weather with low traffic, deliveries average $2.08$ hours. When traffic worsens to `Jam`, delivery time expands to $4.15$ hours ($+99.5\\%$). However, when `Jam` traffic coincides with `Stormy` weather, average delivery time surges to $7.14$ hours—a **$243\\%$ increase** over baseline. Under this compound condition, the SLA delay rate reaches $43.8\\%$.
+  In clear weather with low traffic, deliveries average $2.08$ hours. When traffic worsens to `Jam`, delivery time expands to $4.15$ hours ($+99.5\\%$). However, when `Jam` traffic coincides with `Stormy` weather, average delivery time surges to $7.14$ hours—a **$243\\%$ increase** over baseline. Under this compound condition, the SLA delay rate reaches $68.4\\%$.
 - **Supply Chain Operational Context:**  
   Congestion and weather are not purely additive; severe weather reduces highway braking distances and causes accidents that paralyze capacity during peak traffic hours. Dispatch managers must implement automated *departure hold* or *advance-dispatch* protocols when telemetry flags incoming storm fronts over congested corridors.
 
@@ -516,9 +518,9 @@ Based on the empirical findings from our cleaned dataset and OLAP cross-tabulati
 
 ### Pattern 3: Carrier Velocity Disparity is Robust and Independent of Route Complexity
 - **Empirical Evidence:**  
-  Across all five distinct transit routes in OLAP 5, `FastShip` consistently delivers lower mean hours ($1.30$h on Central, $4.26$h on East) than `NationalExpress` ($1.48$h on Central, $4.76$h on East). `FastShip` achieves an overall delay rate of $14.6\\%$, whereas `NationalExpress` suffers an overall delay rate of $22.4\\%$.
-- **Supply Chain Operational Context:**  
-  Because all four carriers are distributed across all routes in near-equal proportions (OLAP 3), the performance difference is **not** an artifact of route allocation bias. `FastShip`'s operational fleet velocity reflects superior vehicle fleet maintenance, driver routing technology, or depot turnaround times. Procurement teams should reward `FastShip` with higher contract allocations on SLA-critical corridors while holding `NationalExpress` accountable via penalty clauses.""")
+  Across all five distinct transit routes in OLAP 5, `FastShip` consistently delivers lower mean hours ($1.30$h on Central, $4.26$h on East) than `NationalExpress` ($1.48$h on Central, $4.76$h on East). `FastShip` achieves an overall delay rate of $23.2\\%$, whereas `NationalExpress` exhibits an overall delay rate of $37.9\\%$.
+- **Supply Chain & Simulation Context:**  
+  Because all four carriers are distributed across all routes in near-equal proportions (OLAP 3), the performance difference is **not** an artifact of route allocation bias. Within our simulation model, this reflects the underlying carrier efficiency multipliers ($0.94\\times$ vs $1.06\\times$), validating that carrier effects operate independently of route length. (Note: In real-world applications, this would motivate contract re-negotiations, though here it reflects recovery of known simulation parameters.)""")
 
     target_path = Path("notebooks/02_eda_and_olap.ipynb")
     target_path.parent.mkdir(parents=True, exist_ok=True)

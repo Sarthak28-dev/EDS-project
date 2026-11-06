@@ -1,11 +1,11 @@
-Comparison,Mean Difference (Hrs),U Statistic,Raw p-value,Bonferroni Significant (alpha=0.005),Rank-Biserial Correlation (r)
-Clear vs. Foggy,-0.618,1276989.0,6.102537513186154e-21,True,0.205
-Clear vs. Rainy,-0.35,2503452.0,2.3751427029443845e-11,True,0.117
-Clear vs. Snowy,-1.188,718790.0,7.971824578480013e-39,True,0.335
-Clear vs. Stormy,-1.711,437577.5,3.00326668936488e-60,True,0.473
-Foggy vs. Rainy,0.268,717842.5,0.00029908101722606967,True,-0.089
-Foggy vs. Snowy,-0.571,215891.0,5.039073899492695e-06,True,0.141
-Foggy vs. Stormy,-1.093,138186.0,2.879979424326989e-17,True,0.284
-Rainy vs. Snowy,-0.839,343091.0,6.363674519336807e-16,True,0.227
-Rainy vs. Stormy,-1.361,215640.0,2.421188703988275e-32,True,0.368
-Snowy vs. Stormy,-0.523,112210.0,0.00015624878686895186,True,0.137
+Comparison,Mean Difference (Hrs),Rank Difference,Dunn z Statistic,Raw p-value,Bonferroni-Adjusted p-value,Significant (alpha_adj=0.005)
+Clear vs. Foggy,-0.618,-724.98,-9.318,0.0,0.0,True
+Clear vs. Rainy,-0.35,-412.53,-6.586,4.506994777386808e-11,4.506994777386808e-10,True
+Clear vs. Snowy,-1.188,-1208.65,-13.161,0.0,0.0,True
+Clear vs. Stormy,-1.711,-1704.32,-16.525,0.0,0.0,True
+Foggy vs. Rainy,0.268,312.45,3.562,0.0003677122396605892,0.003677122396605892,True
+Foggy vs. Snowy,-0.571,-483.67,-4.378,1.1971964851031913e-05,0.00011971964851031913,True
+Foggy vs. Stormy,-1.093,-979.34,-8.159,4.440892098500626e-16,4.440892098500626e-15,True
+Rainy vs. Snowy,-0.839,-796.12,-7.932,2.220446049250313e-15,2.220446049250313e-14,True
+Rainy vs. Stormy,-1.361,-1291.79,-11.659,0.0,0.0,True
+Snowy vs. Stormy,-0.523,-495.68,-3.826,0.00013039158567784703,0.0013039158567784703,True

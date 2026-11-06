@@ -54,6 +54,6 @@ This data dictionary provides full metadata, structural definitions, validation 
 
 1. **Identifier Uniqueness**: All records must possess a unique `delivery_id`. Exact and conflicting duplicate rows must be deduplicated.
 2. **Temporal Consistency**: `delivery_time` must be chronologically after `dispatch_time`. Inverted timestamps or negative/zero durations represent data acquisition faults and must be eliminated.
-3. **Weight Validity**: Weights must be strictly positive and within realistic physical bounds ($w \le 40$ kg for standard parcel courier contracts). Negative signs (entry error) and values scaled by $100\times$ (gram misentry) are normalized.
+3. **Weight Validity**: Weights must be strictly positive and within realistic physical bounds ($w \le 40$ kg for standard parcel courier contracts). Negative signs (entry error) and values scaled by $100\times$ (omitted decimal point / two-decimal shift keystroke error) are normalized.
 4. **Canonical Categorical Representations**: Typographical variants (e.g. `fastship`, `Apex_Delivery`, `Natl_Express`) are mapped to canonical names. Erroneous categories (`UNKNOWN`, `med`, `Thunderstorm`) are rectified.
 5. **Missing Value Imputation**: Missing values in `weather` and `parcel_weight_kg` must be transparently imputed using domain-consistent methods (median weight by route, mode weather).

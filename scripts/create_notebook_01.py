@@ -133,12 +133,12 @@ audit_report"""
 1. **Missing Data Patterns:**
    - `weather`: 202 missing entries (~2.8%). Caused by weather station telemetry dropouts.
    - `parcel_weight_kg`: 184 missing entries (~2.5%). Caused by warehouse weighbridge sensor disconnects.
-2. **Duplicate Records:**
+2. **Duplicate Records & Conflicting Primary Keys:**
    - 52 exact duplicate rows resulting from database retry transactions.
-   - 75 duplicate `delivery_id` instances, including 23 conflicting rows where parcel weights were re-weighed.
+   - 75 duplicate `delivery_id` instances in total, which include 46 records (23 pairs) where all routing and telemetry values are identical but `parcel_weight_kg` differs by $1.5$ kg. In production data engineering, retaining the first verified record without an audit log is an arbitrary resolution; however, because weight correlation with delivery duration is practically negligible ($R^2 < 0.2\\%$), this variation does not bias regression outcomes.
 3. **Numerical Anomalies:**
-   - 51 negative parcel weights (e.g., `-4.5 kg`) caused by terminal minus-key keystrokes.
-   - 8 extreme weights (> 100 kg, e.g. 700+ kg) caused by operators entering grams instead of kilograms.
+   - 51 negative parcel weights (e.g., `-4.5 kg`) caused by operator minus-key prefix keystroke errors.
+   - 8 extreme weights (> 100 kg, e.g. 289 kg, 414 kg, 2197 kg) caused by **two-decimal shift / omitted decimal point keystroke errors** (multiplying true weights by 100). Dividing by 100.0 exactly recovers the true weights ($2.89$ kg, $4.14$ kg, $21.97$ kg). Note: This was not a grams-to-kg error, which would have required division by 1,000.
 4. **Categorical Inconsistencies:**
    - 253 carrier records with non-canonical casing or formatting (`fastship`, `Apex_Delivery`, `Natl_Express`, `quick logistics`).
    - 21 invalid traffic labels (`UNKNOWN`, `Extremely High`, `med`).
@@ -149,9 +149,17 @@ audit_report"""
     executor.add_markdown(nb, """---
 ## 6. Step-by-Step Justified Data Cleaning Pipeline
 
-We now execute our systematic, non-destructive cleaning pipeline. Every transformation is quantitatively tracked in a persistent cleaning log.""")
+We now execute our systematic, non-destructive cleaning pipeline. Every transformation is quantitatively tracked in a persistent cleaning log.
 
-    code_clean = """clean_df, cleaning_log_df = clean_delivery_data(raw_df)
+### Methodological Note on Imputation & Data Leakage:
+- Imputing missing values on the full dataset before splitting is acceptable for descriptive EDA and OLAP reporting.
+- However, for supervised regression modeling, Person 2 should perform imputation **inside cross-validation folds** to prevent data leakage.
+- We therefore generate two clean datasets:
+  1. `cleaned_delivery_data.csv`: Fully imputed for descriptive EDA/OLAP.
+  2. `modelling_delivery_data.csv`: Structurally cleaned but preserving original NaNs for Person 2's pipeline.""")
+
+    code_clean = """clean_df, cleaning_log_df = clean_delivery_data(raw_df, impute=True)
+model_df, _ = clean_delivery_data(raw_df, impute=False)
 
 print("=== CLEANING PIPELINE EXECUTION LOG ===")
 cleaning_log_df"""
@@ -161,19 +169,22 @@ cleaning_log_df"""
 ## 7. Post-Cleaning Verification & Contract Conformance
 
 We audit the cleaned dataset against all constraints set forth in the Person 2 Data Contract (`docs/data_contract.md`):
-- **Missing Values:** Exactly 0 nulls across all 14 columns.
+- **Missing Values:** Exactly 0 nulls in descriptive cleaned dataset; exactly 200 weather / 178 weight nulls preserved in modelling dataset.
 - **Uniqueness:** 0 duplicate rows, 0 duplicate delivery IDs.
 - **Numerical Validity:** All parcel weights and delivery durations strictly positive.
-- **Categorical Purity:** All carrier names, routes, and weather conditions strictly match canonical vocabularies.""")
+- **Categorical Purity:** All carrier names, routes, and weather conditions strictly match canonical vocabularies.
+- **Ground-Truth SLA:** Delay status strictly calculated via distance-indexed route velocity formula.""")
 
     code_verify = """print("--- POST-CLEANING INTEGRITY AUDIT ---")
-print(f"Raw record count:     {len(raw_df):,}")
-print(f"Cleaned record count: {len(clean_df):,}")
-print(f"Total rows dropped:   {len(raw_df) - len(clean_df)} ({(len(raw_df) - len(clean_df)) / len(raw_df):.2%})")
-print(f"Total nulls in clean dataset: {clean_df.isnull().sum().sum()}")
-print(f"Duplicate delivery_ids:       {clean_df['delivery_id'].duplicated().sum()}")
+print(f"Raw record count:         {len(raw_df):,}")
+print(f"Cleaned record count:     {len(clean_df):,}")
+print(f"Total rows dropped:       {len(raw_df) - len(clean_df)} ({(len(raw_df) - len(clean_df)) / len(raw_df):.2%})")
+print(f"Total nulls (Cleaned):    {clean_df.isnull().sum().sum()}")
+print(f"Total nulls (Modelling):  {model_df.isnull().sum().to_dict()}")
+print(f"Duplicate delivery_ids:   {clean_df['delivery_id'].duplicated().sum()}")
 print(f"Min parcel weight: {clean_df['parcel_weight_kg'].min():.2f} kg, Max: {clean_df['parcel_weight_kg'].max():.2f} kg")
 print(f"Min delivery time: {clean_df['delivery_time_hours'].min():.2f} hrs, Max: {clean_df['delivery_time_hours'].max():.2f} hrs")
+print(f"Total delayed parcels:    {clean_df['delayed'].sum()} ({clean_df['delayed'].mean():.2%})")
 
 print("\\n--- Canonical Value Sets ---")
 print("Carriers:      ", sorted(clean_df['carrier'].unique()))
@@ -185,10 +196,15 @@ print("\\nCleaned Dataset Preview:")
 clean_df.head()"""
     executor.add_code(nb, code_verify)
 
-    executor.add_markdown(nb, """### 7.1 Exporting Cleaned Dataset to Processed Storage""")
+    executor.add_markdown(nb, """### 7.1 Exporting Datasets to Processed Storage""")
     code_save = """output_processed_path = PROJECT_ROOT / "data" / "processed" / "cleaned_delivery_data.csv"
+output_model_path = PROJECT_ROOT / "data" / "processed" / "modelling_delivery_data.csv"
+
 clean_df.to_csv(output_processed_path, index=False)
-print(f"Successfully saved verified cleaned dataset to: {output_processed_path.resolve()}")"""
+model_df.to_csv(output_model_path, index=False)
+
+print(f"Successfully saved descriptive cleaned dataset to: {output_processed_path.resolve()}")
+print(f"Successfully saved unimputed modelling dataset to:   {output_model_path.resolve()}")"""
     executor.add_code(nb, code_save)
 
     target_path = Path("notebooks/01_problem_and_data_audit.ipynb")

@@ -228,7 +228,7 @@ def generate_synthetic_delivery_data(num_records: int = DEFAULT_NUM_RECORDS,
     )
     df.loc[negative_weight_idx, "parcel_weight_kg"] = -1.0 * np.abs(df.loc[negative_weight_idx, "parcel_weight_kg"])
 
-    # d) Extreme erroneous parcel weight entries (e.g., entered in grams instead of kg: 550 kg)
+    # d) Extreme erroneous parcel weight entries (e.g., missing decimal point / 2-decimal shift: 289 instead of 2.89 kg)
     extreme_weight_idx = rng.choice(
         [i for i in range(num_records) if i not in missing_weight_idx and i not in negative_weight_idx],
         size=8,

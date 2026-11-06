@@ -1,6 +1,6 @@
 ,route,total_shipments,delayed_shipments,delay_percentage,delay_rank
-0,Route_East,1127,553,49.07,1
-1,Route_South,1427,612,42.89,2
-2,Route_North,1566,656,41.89,3
-3,Route_West,962,377,39.19,4
-4,Route_Central,2054,458,22.3,5
+0,Route_East,1127,435,38.6,1
+1,Route_North,1566,531,33.91,2
+2,Route_South,1427,444,31.11,3
+3,Route_West,962,298,30.98,4
+4,Route_Central,2054,383,18.65,5

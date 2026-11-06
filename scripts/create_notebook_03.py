@@ -132,21 +132,23 @@ for ax, name, vals in zip(axes, weather_names, weather_groups):
 plt.show()"""
     executor.add_code(nb, code_assumptions)
 
-    executor.add_markdown(nb, """**Diagnostics Evaluation:**  
+    executor.add_markdown(nb, """**Diagnostics Evaluation & Methodological Considerations:**  
 - **Homoscedasticity:** Levene's test yields $W = 58.75, p = 7.17 \\times 10^{-49} < 0.05$, confirming that variances across weather groups are significantly unequal (heteroscedastic).
 - **Normality:** Shapiro-Wilk tests ($p < 0.001$) and Q-Q plots demonstrate moderate departures from normality, driven by multi-modal corridor distances and positive right-tail skewness.
-- **Methodological Selection:** Because normality and homoscedasticity are violated, the non-parametric **Kruskal-Wallis H-test** is the methodologically superior test. However, given our large sample size ($N = 7,136$), One-Way ANOVA is also evaluated for comparison due to the Central Limit Theorem.""")
+- **Kruskal-Wallis Interpretation:** Under heteroscedasticity, the Kruskal-Wallis test does **not** strictly evaluate equality of population medians (which requires identical distribution shapes across groups). Instead, it tests **stochastic dominance** (i.e. whether the probability that a random draw from one weather group exceeds a random draw from another differs from $0.5$).
+- **Methodological Selection:** Because assumptions of normality and equal variance fail, the non-parametric **Kruskal-Wallis H-test** paired with **Dunn's post-hoc test** is the methodologically appropriate non-parametric procedure.""")
 
     executor.add_markdown(nb, """### 2.4 Omninus Hypothesis Tests & Effect Sizes (ANOVA & Kruskal-Wallis)""")
     code_tests = """weather_summary, pairwise_df, meta = run_weather_hypothesis_tests(df)
 weather_summary"""
     executor.add_code(nb, code_tests)
 
-    executor.add_markdown(nb, """### 2.5 Post-Hoc Pairwise Comparisons with Bonferroni Correction
+    executor.add_markdown(nb, """### 2.5 Post-Hoc Pairwise Comparisons using Dunn's Test with Bonferroni Adjustment
 
-With $k = 5$ weather groups, there are $m = \\frac{5 \\times 4}{2} = 10$ unique pairwise comparisons. To control the family-wise error rate (FWER) at $\\alpha = 0.05$, we apply the Bonferroni adjustment:
-$$\\alpha_{\\text{adj}} = \\frac{0.05}{10} = 0.005$$
-We report Mann-Whitney U test statistics, adjusted significance, and Rank-Biserial correlation effect sizes ($r = 1 - \\frac{2U}{n_1 n_2}$).""")
+Following a significant Kruskal-Wallis omnibus test, Dunn's test (Dunn, 1964) is the standard non-parametric pairwise procedure. Unlike independent Mann-Whitney U tests, Dunn's test uses the pooled rank sums and tie-adjusted variance from the omnibus Kruskal-Wallis model:
+$$z_{ij} = \\frac{\\bar{R}_i - \\bar{R}_j}{\\sqrt{\\left(\\frac{N(N+1)}{12} - T\\right)\\left(\\frac{1}{n_i} + \\frac{1}{n_j}\\right)}}$$
+With $k = 5$ weather groups, there are $m = \\frac{5 \\times 4}{2} = 10$ unique pairwise comparisons. We apply the Bonferroni adjustment:
+$$\\alpha_{\\text{adj}} = \\frac{0.05}{10} = 0.005$$""")
 
     code_pairwise = """pairwise_df"""
     executor.add_code(nb, code_pairwise)
@@ -154,7 +156,9 @@ We report Mann-Whitney U test statistics, adjusted significance, and Rank-Biseri
     executor.add_markdown(nb, """**Interpretation of Research Question 1:**  
 1. **Omnibus Rejection of $H_0$:** Both One-Way ANOVA ($F = 149.77, p = 3.37 \\times 10^{-123}$) and Kruskal-Wallis ($H = 429.95, p = 9.37 \\times 10^{-92}$) overwhelmingly reject the null hypothesis at $\\alpha = 0.05$.
 2. **Substantial Effect Size:** $\\eta^2 = 0.0775$ and $\\epsilon^2 = 0.0597$ indicate a medium-to-large effect size in human-operated freight operations: weather condition alone accounts for approximately $6-8\\%$ of the global variance in delivery durations.
-3. **Pairwise Disparities:** All 10 pairwise comparisons maintain statistical significance post-Bonferroni correction ($p < 0.005$). The largest operational delta exists between `Clear` and `Stormy` weather, where deliveries take an average of $1.71$ hours longer ($r = 0.473$), representing a massive $59\\%$ transit inflation.""")
+3. **Stochastic Ordering via Dunn's Test:** All 10 pairwise comparisons maintain statistical significance post-Bonferroni correction ($p_{\\text{adj}} < 0.005$). The mean rank orders strictly increase with atmospheric severity:
+   $$\\text{Clear } (\\bar{R}=3187) < \\text{Rainy } (\\bar{R}=3600) < \\text{Foggy } (\\bar{R}=3912) < \\text{Snowy } (\\bar{R}=4396) < \\text{Stormy } (\\bar{R}=4891)$$
+   The largest contrast exists between `Clear` and `Stormy` ($z = -16.53, p_{\\text{adj}} < 10^{-15}$), representing an average $1.71$ hour transit inflation.""")
 
     # RQ2 Section
     executor.add_markdown(nb, """---
