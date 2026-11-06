@@ -1,0 +1,2 @@
+Model,Test MAE (hours),Test RMSE (hours),Test MSE (hours^2),Test R2
+Random Forest,0.730,1.136,1.290,0.933
