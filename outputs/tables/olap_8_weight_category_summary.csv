@@ -1,0 +1,5 @@
+,weight_category,parcel_count,mean_weight_kg,mean_delivery_hours,delay_rate_pct
+0,Light (<3kg),2099,1.99,2.97,34.16
+1,Standard (3-8kg),3479,4.96,3.04,36.79
+2,Heavy (8-15kg),1188,10.59,3.13,41.25
+3,Freight (>15kg),370,21.36,3.26,45.68

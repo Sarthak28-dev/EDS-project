@@ -1,0 +1,6 @@
+,route,total_deliveries,mean_distance_km,mean_hours,delay_pct
+0,Route_Central,2054,35.36,1.48,22.3
+1,Route_East,1127,258.98,5.46,49.07
+2,Route_North,1566,145.21,3.38,41.89
+3,Route_South,1427,110.8,2.8,42.89
+4,Route_West,962,129.23,3.41,39.19
